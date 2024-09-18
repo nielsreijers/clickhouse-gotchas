@@ -76,7 +76,26 @@ SELECT * FROM top_products;
 
 
 
--- B.2) Materialize view column names have to match exactly
+-- B.2) A materialized view is NOT just an insert trigger
+-- This needs [Kafka](https://kafka.apache.org/) setup and listening on port 9092.
+DROP TABLE IF EXISTS kafka;
+CREATE TABLE kafka (id Int32, message String)
+ENGINE = Kafka
+SETTINGS kafka_broker_list = 'localhost:9092', kafka_topic_list = 'my_message', kafka_group_name = 'my_consumers', kafka_format = 'JSONEachRow';
+-- Run:
+--    kafka-consumer-groups.sh --bootstrap-server localhost:9092 --describe --group my_consumers
+-- It should say 'Consumer group my_consumers does not exist.'
+DROP VIEW IF EXISTS kafka_log_mv;
+-- This makes clickhouse a kafka consumer
+CREATE MATERIALIZED VIEW kafka_log_mv (id Int32, message String) ORDER BY id
+AS SELECT (id, message) FROM kafka;
+-- Run the same command again:
+--    kafka-consumer-groups.sh --bootstrap-server localhost:9092 --describe --group my_consumers
+-- It now shows ClickHouse is in the my_consumers group
+
+
+
+-- B.3) Materialize view column names have to match exactly
 DROP TABLE IF EXISTS sales;
 CREATE TABLE sales (product String, amount Int32) ENGINE = SummingMergeTree() ORDER BY product;
 -- Create a materialized view that filters out products with less than 50 total sales
@@ -126,7 +145,7 @@ SYSTEM START MERGES events;
 ALTER TABLE events MODIFY TTL date + INTERVAL 1 MONTH DELETE WHERE occurences < 50;
 -- This should only delete the 'unauthorised' events record,
 -- because the total for deadlocks is 70.
--- But if the records aren't merged, Clickhouse will delete the deadlock records as well.
+-- But if the records aren't merged, ClickHouse will delete the deadlock records as well.
 SELECT * FROM events;
 
 
@@ -147,7 +166,7 @@ SET materialize_ttl_after_modify=1;
 ALTER TABLE events MODIFY TTL
     date + INTERVAL 1 MONTH - INTERVAL 1 HOUR GROUP BY event SET occurences = SUM(occurences),
     date + INTERVAL 1 MONTH DELETE WHERE occurences < 50;
--- The result depends on which rule Clickhouse decides to process first.
+-- The result depends on which rule ClickHouse decides to process first.
 -- If it's the GROUP BY, the deadlock records remain, if it's the DELETE, they get deleted.
 SELECT * FROM events;
 
